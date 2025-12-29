@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-# 🔹 ADDED (for port binding)
+# 🔹 PORT BINDING
 from aiohttp import web
 
 BOT_TOKEN = "8229954158:AAGzZ5psj2K2osN2k5Na9pncnPE8u1ufiWU"
@@ -155,11 +155,7 @@ class InstagramAccountCreator:
 
         pwd = f"{fname}@{random.randint(111, 999)}"
         mid = self.headers['cookie'].split('mid=')[1].split(';')[0]
-        datr = (
-            self.headers['cookie'].split('datr=')[1].split(';')[0]
-            if 'datr=' in self.headers['cookie']
-            else ""
-        )
+        datr = self.headers['cookie'].split('datr=')[1].split(';')[0] if 'datr=' in self.headers['cookie'] else ""
 
         payload = {
             'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{round(time.time())}:{pwd}',
@@ -182,7 +178,6 @@ class InstagramAccountCreator:
         )
 
         if '"account_created":true' in resp.text:
-            rur = resp.cookies.get('rur', '').replace(',', '\\054')
             return AccountCredentials(
                 username=username,
                 password=pwd,
@@ -191,7 +186,7 @@ class InstagramAccountCreator:
                 csrf_token=resp.cookies.get('csrftoken', ''),
                 ds_user_id=resp.cookies.get('ds_user_id', ''),
                 ig_did=self.ig_did,
-                rur=rur,
+                rur=resp.cookies.get('rur', ''),
                 mid=mid,
                 datr=datr
             )
@@ -203,22 +198,13 @@ def get_main_keyboard():
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(
         "👋 Welcome! Press the button to start.\n\n"
-        "⏳ *Users:* 1-minute cooldown\n"
-        "⚡ *Admins:* No cooldown",
+        "⏳ Users: Cooldown enabled\n"
+        "⚡ Admins: No cooldown",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_main_keyboard()
     )
 
 async def create_request(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    user_id = u.effective_user.id
-    if user_id not in ADMIN_IDS:
-        if user_id in user_cooldowns:
-            elapsed = time.time() - user_cooldowns[user_id]
-            if elapsed < COOLDOWN_SECONDS:
-                remaining = int(COOLDOWN_SECONDS - elapsed)
-                await u.message.reply_text(f"⏳ Cooldown: {remaining}s remaining.")
-                return ConversationHandler.END
-
     await u.message.reply_text("📧 Send the email address:")
     return GET_EMAIL
 
@@ -229,61 +215,45 @@ async def handle_email(u: Update, c: ContextTypes.DEFAULT_TYPE):
     creator = InstagramAccountCreator()
     c.user_data['creator'] = creator
 
-    msg = await u.message.reply_text("⚙️ Generating headers and sending code...")
+    msg = await u.message.reply_text("⚙️ Sending code...")
 
     loop = asyncio.get_running_loop()
-    try:
-        await loop.run_in_executor(None, creator.generate_headers)
-        sent = await loop.run_in_executor(None, creator.send_verification, email)
-        if sent:
-            await msg.edit_text(f"📩 Code sent to `{email}`.\nEnter the 6-digit code:")
-            return GET_CODE
-        else:
-            await msg.edit_text("❌ Failed to send code.")
-            return ConversationHandler.END
-    except Exception as e:
-        await msg.edit_text(f"⚠️ Error: {str(e)}")
-        return ConversationHandler.END
+    await loop.run_in_executor(None, creator.generate_headers)
+    sent = await loop.run_in_executor(None, creator.send_verification, email)
+
+    if sent:
+        await msg.edit_text("📩 Enter the 6-digit code:")
+        return GET_CODE
+
+    await msg.edit_text("❌ Failed.")
+    return ConversationHandler.END
 
 async def handle_code(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    code = u.message.text.strip()
-    email = c.user_data['email']
     creator = c.user_data['creator']
-
-    msg = await u.message.reply_text("⏳ Processing...")
+    email = c.user_data['email']
+    code = u.message.text.strip()
 
     loop = asyncio.get_running_loop()
-    try:
-        signup_code = await loop.run_in_executor(None, creator.validate_code, email, code)
-        if not signup_code:
-            await msg.edit_text("❌ Invalid code.")
-            return ConversationHandler.END
+    signup_code = await loop.run_in_executor(None, creator.validate_code, email, code)
 
-        acc = await loop.run_in_executor(None, creator.create, email, signup_code)
-        if acc:
-            user_cooldowns[u.effective_user.id] = time.time()
-            await msg.delete()
-            await u.message.reply_text(
-                acc.to_formatted_message(),
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=get_main_keyboard()
-            )
-        else:
-            await msg.edit_text("❌ Account creation rejected by Instagram.")
-    except Exception as e:
-        await msg.edit_text(f"⚠️ Error: {str(e)}")
+    if not signup_code:
+        await u.message.reply_text("❌ Invalid code.")
+        return ConversationHandler.END
 
-    c.user_data.pop('creator', None)
+    acc = await loop.run_in_executor(None, creator.create, email, signup_code)
+    if acc:
+        await u.message.reply_text(acc.to_formatted_message(), parse_mode=ParseMode.MARKDOWN)
+
     return ConversationHandler.END
 
 async def cancel(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    await u.message.reply_text("Cancelled.", reply_markup=get_main_keyboard())
+    await u.message.reply_text("Cancelled.")
     return ConversationHandler.END
 
-# 🔹 ADDED: simple web server for port binding
-async def web_server():
-    async def handle(request):
-        return web.Response(text="Bot is running")
+# 🔹 WEB SERVER
+async def start_web():
+    async def handle(_):
+        return web.Response(text="Bot running")
 
     app = web.Application()
     app.router.add_get("/", handle)
@@ -291,19 +261,11 @@ async def web_server():
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    logger.info(f"Web server on {port}")
 
-    logger.info(f"Web server running on port {port}")
-
-async def run_bot():
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .connect_timeout(30)
-        .read_timeout(30)
-        .build()
-    )
+async def main():
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^Get Instagram Account$"), create_request)],
@@ -314,26 +276,11 @@ async def run_bot():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    for handler in [CommandHandler("start", start), conv]:
-        app.add_handler(handler)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv)
 
-    logger.info("Initializing...")
-    await app.initialize()
-    await app.start()
-
-    logger.info("Bot is active!")
-    await app.updater.start_polling(drop_pending_updates=True)
-
-    # 🔹 ADDED: start web server
-    await web_server()
-
-    try:
-        while True:
-            await asyncio.sleep(1)
-    finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+    await start_web()
+    await application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    asyncio.run(main())
