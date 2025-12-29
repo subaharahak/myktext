@@ -1,12 +1,4 @@
 python-telegram-bot==20.7
-curl-cffi
-names
-asyncio
-dataclasses; python_version < "3.7"
-typing-extensions
 aiohttp
-python-3.11.9
-python-telegram-bot==20.7
 curl-cffi
-aiohttp
 names
