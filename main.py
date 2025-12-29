@@ -21,6 +21,9 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
+# 🔹 ADDED (for port binding)
+from aiohttp import web
+
 BOT_TOKEN = "8229954158:AAGzZ5psj2K2osN2k5Na9pncnPE8u1ufiWU"
 ADMIN_IDS = [7445191377]
 COOLDOWN_SECONDS = 10
@@ -277,6 +280,22 @@ async def cancel(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text("Cancelled.", reply_markup=get_main_keyboard())
     return ConversationHandler.END
 
+# 🔹 ADDED: simple web server for port binding
+async def web_server():
+    async def handle(request):
+        return web.Response(text="Bot is running")
+
+    app = web.Application()
+    app.router.add_get("/", handle)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    logger.info(f"Web server running on port {port}")
+
 async def run_bot():
     app = (
         ApplicationBuilder()
@@ -304,6 +323,9 @@ async def run_bot():
 
     logger.info("Bot is active!")
     await app.updater.start_polling(drop_pending_updates=True)
+
+    # 🔹 ADDED: start web server
+    await web_server()
 
     try:
         while True:
