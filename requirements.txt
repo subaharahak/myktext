@@ -4,3 +4,4 @@ names
 asyncio
 dataclasses; python_version < "3.7"
 typing-extensions
+aiohttp
